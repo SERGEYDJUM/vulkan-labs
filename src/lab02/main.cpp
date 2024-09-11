@@ -106,7 +106,7 @@ class App {
 #ifndef NDEBUG
             std::cout << "required: " << required_ext << std::endl;
 #endif
-            if (!extension_set.contains(required_ext)) {
+            if (extension_set.count(required_ext) == 0) {
                 throw std::runtime_error(
                     "vulkan extension(s) required by GLFW missing");
             }
@@ -115,7 +115,7 @@ class App {
         }
 
         if (enable_validation_layers) {
-            if (!extension_set.contains(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
+            if (extension_set.count(VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0) {
                 throw std::runtime_error(
                     "vulkan debug utils extension missing");
             }
@@ -130,6 +130,7 @@ class App {
 
         inst_info.enabledExtensionCount = instance_extensions.size();
         inst_info.ppEnabledExtensionNames = instance_extensions.data();
+
         inst_info.enabledLayerCount = instance_layers.size();
         inst_info.ppEnabledLayerNames = instance_layers.data();
 
