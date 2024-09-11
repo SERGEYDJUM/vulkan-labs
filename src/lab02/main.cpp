@@ -1,88 +1,125 @@
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-#include <vulkan/vulkan.h>
-
 #include <iostream>
 #include <stdexcept>
-#include <vector>
+#include <unordered_set>
 
-class HelloTriangleApplication {
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <vulkan/vulkan_raii.hpp>
+
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+
+class App {
    public:
-    void run() {
+    App() : vk_instance{initInstance()} {
+        glfwInit();
+        checkVkLayers();
+        checkVkExtensions();
         initWindow();
-        initVulkan();
-        mainLoop();
-        cleanup();
     }
+
+    ~App() {
+        glfwDestroyWindow(window);
+        glfwTerminate();
+    }
+
+    void run() { eventLoop(); }
 
    private:
-    uint32_t window_width = 800;
-    uint32_t window_height = 600;
-    GLFWwindow* window;
-    VkInstance vk_instance;
+    const std::pair<uint32_t, uint32_t> window_dims{800, 600};
+
+    vk::raii::Context vk_context;
+    vk::raii::Instance vk_instance;
+
+    GLFWwindow* window = nullptr;
+
+#ifdef NDEBUG
+    const bool enable_validation_layers = false;
+#else
+    const bool enable_validation_layers = true;
+#endif
+
+    void checkVkLayers() {
+        bool validation_layer_present = false;
+
+        for (auto layer : vk_context.enumerateInstanceLayerProperties()) {
+            std::string layername{static_cast<const char*>(layer.layerName)};
+#ifndef NDEBUG
+            std::cout << layername << std::endl;
+#endif
+            if (layername == "VK_LAYER_KHRONOS_validation") {
+                validation_layer_present = true;
+            }
+        }
+
+        if (enable_validation_layers && !validation_layer_present) {
+            throw std::runtime_error("vulkan validation layer missing");
+        }
+    }
+
+    void checkVkExtensions() {
+        uint32_t glfw_extensions_cnt = 0;
+        const char** glfw_extensions =
+            glfwGetRequiredInstanceExtensions(&glfw_extensions_cnt);
+
+        std::unordered_set<std::string> extension_set{};
+
+        for (auto ext : vk_context.enumerateInstanceExtensionProperties()) {
+            std::string extname{static_cast<const char*>(ext.extensionName)};
+#ifndef NDEBUG
+            std::cout << extname << std::endl;
+#endif
+            extension_set.insert(extname);
+        }
+
+        for (uint32_t i = 0; i < glfw_extensions_cnt; i++) {
+            std::string required_ext{glfw_extensions[i]};
+#ifndef NDEBUG
+            std::cout << "required: " << required_ext << std::endl;
+#endif
+            if (!extension_set.contains(required_ext)) {
+                throw std::runtime_error(
+                    "vulkan extension(s) required by GLFW missing");
+            }
+        }
+
+        if (enable_validation_layers &&
+            !extension_set.contains(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
+            throw std::runtime_error("vulkan debug utils extension missing");
+        }
+    }
+
+    vk::raii::Instance initInstance() {
+        vk::ApplicationInfo app_info{"App", 1, "Engine", 1, VK_API_VERSION_1_3};
+
+        vk::InstanceCreateInfo instance_info(vk::InstanceCreateFlags(),
+                                             &app_info);
+
+        return vk_context.createInstance(instance_info);
+    }
 
     void initWindow() {
-        glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-        window = glfwCreateWindow(window_width, window_height, "Vulkan",
-                                  nullptr, nullptr);
+
+        window = glfwCreateWindow(window_dims.first, window_dims.second,
+                                  "Vulkan", nullptr, nullptr);
     }
 
-    void initVulkan() { createInstance(); }
-
-    void createInstance() {
-        VkApplicationInfo appInfo{};
-        appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pApplicationName = "Hello Triangle";
-        appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.pEngineName = "No Engine";
-        appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.apiVersion = VK_API_VERSION_1_3;
-
-        uint32_t glfwExtensionCount = 0;
-        const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
-        VkInstanceCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-        createInfo.pApplicationInfo = &appInfo;
-        createInfo.enabledExtensionCount = glfwExtensionCount;
-        createInfo.ppEnabledExtensionNames = glfwExtensions;
-
-        if (vkCreateInstance(&createInfo, nullptr, &vk_instance) !=
-            VK_SUCCESS) {
-            throw std::runtime_error("failed to create Vulkan instance");
-        }
-
-        uint32_t extensionCount = 0;
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-        std::vector<VkExtensionProperties> extensions(extensionCount);
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
-
-        for (auto extension : extensions) {
-            std::cout << extension.extensionName << " " << extension.specVersion << std::endl;
-        }
-    }
-
-    void mainLoop() {
+    void eventLoop() {
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
         }
     }
-
-    void cleanup() {
-        glfwDestroyWindow(window);
-        glfwTerminate();
-    }
 };
 
 int main() {
-    HelloTriangleApplication app;
-
     try {
+        App app{};
         app.run();
+    } catch (vk::SystemError& e) {
+        std::cerr << e.what() << std::endl;
+        return EXIT_FAILURE;
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
