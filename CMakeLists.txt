@@ -15,13 +15,14 @@ include_directories(${Vulkan_INCLUDE_DIRS})
 find_package(glfw3 CONFIG REQUIRED)
 
 add_executable(
-	vk-test-exec
-	src/lab02/main.cpp
+	vk-lab-exec
+	src/main.cpp
+	src/utils.hpp
 )
 
 target_link_libraries(
-	vk-test-exec
+	vk-lab-exec
 	PRIVATE
-	glfw 
+	glfw
 	${Vulkan_LIBRARIES}
 )

@@ -5,10 +5,13 @@
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+
+#include "utils.hpp"
 
 class App {
    public:
@@ -17,8 +20,13 @@ class App {
         initGlfw();
         gatherVkLayers();
         gatherVkExtensions();
-        initInstance();
         initWindow();
+
+        initInstance();
+#ifndef NDEBUG
+        initValidation();
+#endif
+        initDevice();
         initSurface();
     }
 
@@ -38,18 +46,38 @@ class App {
     const vk::Extent2D surface_extent{800, 600};
     const vk::raii::Context vk_context{};
 
-#ifndef NDEBUG
-    const bool enable_validation_layers = true;
-#else
-    const bool enable_validation_layers = false;
-#endif
-
     std::optional<vk::raii::Instance> vk_instance;
     std::optional<vk::raii::SurfaceKHR> vk_surface;
+    std::optional<vk::raii::PhysicalDevice> vk_physical_device;
+    std::optional<vk::raii::Device> vk_device;
     std::vector<const char*> instance_extensions;
     std::vector<const char*> instance_layers;
 
     GLFWwindow* window = nullptr;
+
+#ifndef NDEBUG
+    const bool enable_validation_layers = true;
+    std::optional<vk::raii::DebugUtilsMessengerEXT> debug_messenger;
+
+    /// @brief Initializes debug messenger
+    void initValidation() {
+        vk::DebugUtilsMessengerCreateInfoEXT debug_messenger_info{
+            {},
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+                vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo |
+                vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+                vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+            vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+                vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
+                vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
+            debugUtilsMessengerCallback};
+
+        debug_messenger = vk_instance.value().createDebugUtilsMessengerEXT(
+            debug_messenger_info);
+    }
+#else
+    const bool enable_validation_layers = false;
+#endif
 
     /// @brief Initializes GLFW and sets error callback
     void initGlfw() {
@@ -62,26 +90,30 @@ class App {
 
     /// @brief Checks availability of necessary layers and records them
     void gatherVkLayers() {
-        const char* validation_layer_name = "VK_LAYER_KHRONOS_validation";
-        bool validation_layer_present = false;
+        std::vector<const char*> required_layers = {
+            "VK_LAYER_KHRONOS_validation"};
+
+        std::unordered_set<std::string> layer_set{};
 
         for (auto layer : vk_context.enumerateInstanceLayerProperties()) {
-            // Couldn't avoid double cast
-            std::string layername{static_cast<const char*>(layer.layerName)};
-#ifndef NDEBUG
-            std::cout << layername << std::endl;
-#endif
-            if (layername == validation_layer_name) {
-                validation_layer_present = true;
-            }
+            std::string layer_name{static_cast<const char*>(layer.layerName)};
+            // #ifndef NDEBUG
+            //             std::cout << layer_name << std::endl;
+            // #endif
+            layer_set.insert(layer_name);
         }
 
-        if (enable_validation_layers) {
-            if (!validation_layer_present) {
-                throw std::runtime_error("vulkan validation layer missing");
+        for (auto layer : required_layers) {
+            // #ifndef NDEBUG
+            //             std::cout << "required: " << layer <<
+            //             std::endl;
+            // #endif
+            if (layer_set.count(layer) == 0) {
+                throw std::runtime_error(
+                    "vulkan layer(s) required by GLFW missing");
             }
 
-            instance_layers.emplace_back(validation_layer_name);
+            instance_layers.emplace_back(layer);
         }
     }
 
@@ -95,17 +127,18 @@ class App {
 
         for (auto ext : vk_context.enumerateInstanceExtensionProperties()) {
             std::string extname{static_cast<const char*>(ext.extensionName)};
-#ifndef NDEBUG
-            std::cout << extname << std::endl;
-#endif
+            // #ifndef NDEBUG
+            //             std::cout << extname << std::endl;
+            // #endif
             extension_set.insert(extname);
         }
 
         for (uint32_t i = 0; i < glfw_extensions_cnt; i++) {
             std::string required_ext{glfw_extensions[i]};
-#ifndef NDEBUG
-            std::cout << "required: " << required_ext << std::endl;
-#endif
+            // #ifndef NDEBUG
+            //             std::cout << "required: " << required_ext <<
+            //             std::endl;
+            // #endif
             if (extension_set.count(required_ext) == 0) {
                 throw std::runtime_error(
                     "vulkan extension(s) required by GLFW missing");
@@ -147,14 +180,43 @@ class App {
 
     /// @brief Creates a Vulkan surface on the window
     void initSurface() {
+        auto& instance = vk_instance.value();
+
         VkSurfaceKHR surface;
 
-        if (glfwCreateWindowSurface(*vk_instance.value(), window, nullptr,
-                                    &surface) != VK_SUCCESS) {
+        if (glfwCreateWindowSurface(*instance, window, nullptr, &surface) !=
+            VK_SUCCESS) {
             throw std::runtime_error("failed to create window surface");
         }
 
-        vk_surface = {vk_instance.value(), surface};
+        vk_surface = {instance, surface};
+    }
+
+    void initDevice() {
+        auto& instance = vk_instance.value();
+
+        auto physical_devices = instance.enumeratePhysicalDevices();
+
+        if (physical_devices.empty()) {
+            throw std::runtime_error("failed to find GPUs with Vulkan support");
+        }
+
+        vk_physical_device = physical_devices.front();
+
+        auto graphics_queue_family_idx = findGraphicsQueueFamilyIndex(
+            vk_physical_device->getQueueFamilyProperties());
+
+        float queue_priority = 0.0f;
+
+        vk::DeviceQueueCreateInfo device_queue_create_info(
+            vk::DeviceQueueCreateFlags(), graphics_queue_family_idx, 1,
+            &queue_priority);
+
+        vk::DeviceCreateInfo device_create_info(vk::DeviceCreateFlags(),
+                                                device_queue_create_info,
+                                                instance_layers, {});
+
+        vk_device = vk::raii::Device(*vk_physical_device, device_create_info);
     }
 };
 
