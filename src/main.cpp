@@ -90,10 +90,14 @@ class App {
 
     /// @brief Checks availability of necessary layers and records them
     void gatherVkLayers() {
+        std::unordered_set<std::string> layer_set{};
+
+#ifndef NDEBUG
         std::vector<const char*> required_layers = {
             "VK_LAYER_KHRONOS_validation"};
-
-        std::unordered_set<std::string> layer_set{};
+#else
+        std::vector<const char*> required_layers = {};
+#endif
 
         for (auto layer : vk_context.enumerateInstanceLayerProperties()) {
             std::string layer_name{static_cast<const char*>(layer.layerName)};
