@@ -8,7 +8,7 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
-#define GLFW_INCLUDE_VULKAN
+// Ensure inclusion after Vulkan
 #include <GLFW/glfw3.h>
 
 #include "utils.hpp"
@@ -215,6 +215,7 @@ class App {
                     static_cast<VkPhysicalDevice>(*phys_dev),
                     graphics_queue_family_idx) == GLFW_TRUE) {
                 vk_physical_device = phys_dev;
+                break;
             }
         }
 
