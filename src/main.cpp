@@ -82,6 +82,11 @@ class App {
     /// @brief Initializes GLFW and sets error callback
     void initGlfw() {
         glfwInit();
+
+        if (glfwVulkanSupported() == GLFW_FALSE) {
+            throw std::runtime_error("glfw: failed to find vulkan loader");
+        }
+
         glfwSetErrorCallback([](int error, const char* msg) {
             std::cerr << "glfw: "
                       << "(" << error << ") " << msg << std::endl;
@@ -199,28 +204,41 @@ class App {
     void initDevice() {
         auto& instance = vk_instance.value();
 
-        auto physical_devices = instance.enumeratePhysicalDevices();
+        uint32_t graphics_queue_family_idx;
 
-        if (physical_devices.empty()) {
+        for (auto phys_dev : instance.enumeratePhysicalDevices()) {
+            graphics_queue_family_idx = findGraphicsQueueFamilyIndex(
+                phys_dev.getQueueFamilyProperties());
+
+            if (glfwGetPhysicalDevicePresentationSupport(
+                    static_cast<VkInstance>(*instance),
+                    static_cast<VkPhysicalDevice>(*phys_dev),
+                    graphics_queue_family_idx) == GLFW_TRUE) {
+                vk_physical_device = phys_dev;
+            }
+        }
+
+        if (!vk_physical_device.has_value()) {
             throw std::runtime_error("failed to find GPUs with Vulkan support");
         }
 
-        vk_physical_device = physical_devices.front();
+        auto& physical_device = vk_physical_device.value();
 
-        auto graphics_queue_family_idx = findGraphicsQueueFamilyIndex(
-            vk_physical_device->getQueueFamilyProperties());
-
+        uint32_t queue_count = 1;
         float queue_priority = 0.0f;
 
+        std::vector<const char*>& device_layers = instance_layers;
+        std::vector<const char*> device_extensions{};
+
         vk::DeviceQueueCreateInfo device_queue_create_info(
-            vk::DeviceQueueCreateFlags(), graphics_queue_family_idx, 1,
-            &queue_priority);
+            vk::DeviceQueueCreateFlags(), graphics_queue_family_idx,
+            queue_count, &queue_priority);
 
-        vk::DeviceCreateInfo device_create_info(vk::DeviceCreateFlags(),
-                                                device_queue_create_info,
-                                                instance_layers, {});
+        vk::DeviceCreateInfo device_create_info(
+            vk::DeviceCreateFlags(), device_queue_create_info, instance_layers,
+            device_extensions);
 
-        vk_device = vk::raii::Device(*vk_physical_device, device_create_info);
+        vk_device = physical_device.createDevice(device_create_info);
     }
 };
 
