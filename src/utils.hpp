@@ -10,7 +10,7 @@ struct SurfaceInfo {
                             vk::raii::SurfaceKHR &surface) {
         auto capabilities = device.getSurfaceCapabilitiesKHR(surface);
         auto surface_formats = device.getSurfaceFormatsKHR(surface);
-        auto surface_present_modes = device.getSurfacePresentModesKHR();
+        auto surface_present_modes = device.getSurfacePresentModesKHR(surface);
 
         auto selected_format = surface_formats[0];
         for (auto format : surface_formats) {
@@ -43,7 +43,7 @@ struct QueueFamiliesInfo {
         std::optional<uint32_t> graphics;
         std::optional<uint32_t> present;
 
-        for (size_t i = 0; i < families.size(); i++) {
+        for (uint32_t i = 0; i < families.size(); i++) {
             if (families[i].queueFlags & vk::QueueFlagBits::eGraphics) {
                 graphics = i;
             }

@@ -33,6 +33,7 @@ class App {
         initPhysicalDevice();
         initDevice();
         initSwapchain();
+        createImageViews();
     }
 
     /// @brief Runs window's event loop
@@ -59,6 +60,10 @@ class App {
     std::optional<QueueFamiliesInfo> vk_q_families_info;
     std::optional<vk::raii::Queue> vk_graphics_queue;
     std::optional<vk::raii::Queue> vk_present_queue;
+    std::optional<SurfaceInfo> vk_surface_info;
+
+    std::vector<vk::Image> vk_sc_images;
+    std::vector<vk::raii::ImageView> vk_sc_imageviews;
 
     std::vector<const char*> instance_extensions;
     std::vector<const char*> instance_layers;
@@ -276,8 +281,10 @@ class App {
                                                 REQUIRED_DEVICE_EXTENSIONS);
 
         vk_device = physical_device.createDevice(device_create_info);
+
         vk_graphics_queue =
             vk_device->getQueue(queues_info.graphics_family_idx, 0);
+
         vk_present_queue =
             vk_device->getQueue(queues_info.present_family_idx, 0);
     }
@@ -323,6 +330,26 @@ class App {
         }
 
         vk_swapchain = device.createSwapchainKHR(swapchain_info);
+        vk_sc_images = vk_swapchain->getImages();
+        vk_surface_info = surface_info;
+    }
+
+    void createImageViews() {
+        auto &srfc_info = vk_surface_info.value();
+        auto &device = vk_device.value();
+
+        for (size_t i = 0; i < vk_sc_images.size(); i++) {
+            vk::ImageSubresourceRange is_range{};
+            is_range.setAspectMask(vk::ImageAspectFlagBits::eColor);
+            is_range.setLayerCount(1);
+            is_range.setLevelCount(1);
+
+            vk::ImageViewCreateInfo imv_info({}, vk_sc_images[i], vk::ImageViewType::e2D, srfc_info.color_format);
+            imv_info.setSubresourceRange(is_range);
+
+            vk_sc_imageviews.emplace_back(device.createImageView(imv_info));
+        }
+        
     }
 };
 
