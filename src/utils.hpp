@@ -1,24 +1,71 @@
 #pragma once
 
-uint32_t findGraphicsQueueFamilyIndex(
-    std::vector<vk::QueueFamilyProperties> const& queueFamilyProperties) {
-    // get the first index into queueFamiliyProperties which supports graphics
-    std::vector<vk::QueueFamilyProperties>::const_iterator
-        graphicsQueueFamilyProperty = std::find_if(
-            queueFamilyProperties.begin(), queueFamilyProperties.end(),
-            [](vk::QueueFamilyProperties const& qfp) {
-                return qfp.queueFlags & vk::QueueFlagBits::eGraphics;
-            });
-    assert(graphicsQueueFamilyProperty != queueFamilyProperties.end());
-    return static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(),
-                                               graphicsQueueFamilyProperty));
-}
+struct SurfaceInfo {
+    vk::SurfaceCapabilitiesKHR capabilities;
+    vk::Format color_format;
+    vk::ColorSpaceKHR color_space;
+    vk::PresentModeKHR present_mode;
+
+    static SurfaceInfo from(vk::raii::PhysicalDevice &device,
+                            vk::raii::SurfaceKHR &surface) {
+        auto capabilities = device.getSurfaceCapabilitiesKHR(surface);
+        auto surface_formats = device.getSurfaceFormatsKHR(surface);
+        auto surface_present_modes = device.getSurfacePresentModesKHR();
+
+        auto selected_format = surface_formats[0];
+        for (auto format : surface_formats) {
+            if ((format.format == vk::Format::eB8G8R8A8Srgb) &&
+                (format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)) {
+                selected_format = format;
+                break;
+            }
+        }
+
+        auto selected_mode = surface_present_modes[0];
+        for (auto mode : surface_present_modes) {
+            if (mode == vk::PresentModeKHR::eMailbox) {
+                selected_mode = mode;
+            }
+        }
+
+        return {capabilities, selected_format.format,
+                selected_format.colorSpace, selected_mode};
+    }
+};
+
+struct QueueFamiliesInfo {
+    uint32_t graphics_family_idx;
+    uint32_t present_family_idx;
+
+    static std::optional<QueueFamiliesInfo> from(
+        vk::raii::PhysicalDevice &device, vk::raii::SurfaceKHR &surface) {
+        auto families = device.getQueueFamilyProperties();
+        std::optional<uint32_t> graphics;
+        std::optional<uint32_t> present;
+
+        for (size_t i = 0; i < families.size(); i++) {
+            if (families[i].queueFlags & vk::QueueFlagBits::eGraphics) {
+                graphics = i;
+            }
+
+            if (device.getSurfaceSupportKHR(i, surface)) {
+                present = i;
+            }
+        }
+
+        if (!graphics.has_value() || !present.has_value()) {
+            return std::nullopt;
+        }
+
+        return QueueFamiliesInfo{graphics.value(), present.value()};
+    }
+};
 
 VKAPI_ATTR VkBool32 VKAPI_CALL debugUtilsMessengerCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT messageTypes,
-    VkDebugUtilsMessengerCallbackDataEXT const* pCallbackData,
-    void* /*pUserData*/) {
+    VkDebugUtilsMessengerCallbackDataEXT const *pCallbackData,
+    void * /*pUserData*/) {
     switch (static_cast<uint32_t>(pCallbackData->messageIdNumber)) {
         case 0x822806fa:
             return vk::False;

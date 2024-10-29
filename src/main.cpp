@@ -13,6 +13,9 @@
 
 #include "utils.hpp"
 
+const std::vector<const char*> REQUIRED_DEVICE_EXTENSIONS = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+
 class App {
    public:
     /// @brief Initializes GLFW and Vulkan components in the correct order
@@ -26,8 +29,10 @@ class App {
 #ifndef NDEBUG
         initValidation();
 #endif
-        initDevice();
         initSurface();
+        initPhysicalDevice();
+        initDevice();
+        initSwapchain();
     }
 
     /// @brief Runs window's event loop
@@ -43,13 +48,18 @@ class App {
     }
 
    private:
-    const vk::Extent2D surface_extent{800, 600};
+    const vk::Extent2D window_extent{800, 600};
     const vk::raii::Context vk_context{};
 
     std::optional<vk::raii::Instance> vk_instance;
     std::optional<vk::raii::SurfaceKHR> vk_surface;
     std::optional<vk::raii::PhysicalDevice> vk_physical_device;
     std::optional<vk::raii::Device> vk_device;
+    std::optional<vk::raii::SwapchainKHR> vk_swapchain;
+    std::optional<QueueFamiliesInfo> vk_q_families_info;
+    std::optional<vk::raii::Queue> vk_graphics_queue;
+    std::optional<vk::raii::Queue> vk_present_queue;
+
     std::vector<const char*> instance_extensions;
     std::vector<const char*> instance_layers;
 
@@ -183,7 +193,7 @@ class App {
     void initWindow() {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-        window = glfwCreateWindow(surface_extent.width, surface_extent.height,
+        window = glfwCreateWindow(window_extent.width, window_extent.height,
                                   "App", nullptr, nullptr);
     }
 
@@ -201,45 +211,118 @@ class App {
         vk_surface = {instance, surface};
     }
 
-    void initDevice() {
-        auto& instance = vk_instance.value();
+    bool checkDeviceExtensions(vk::raii::PhysicalDevice& phys_dev) {
+        std::unordered_set<std::string> extension_set{};
+        for (auto ext : phys_dev.enumerateDeviceExtensionProperties()) {
+            std::string extname{static_cast<const char*>(ext.extensionName)};
+            extension_set.insert(extname);
+        }
 
-        uint32_t graphics_queue_family_idx;
+        for (auto req_ext : REQUIRED_DEVICE_EXTENSIONS) {
+            if (extension_set.count(req_ext) == 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    void initPhysicalDevice() {
+        auto& instance = vk_instance.value();
+        auto& surface = vk_surface.value();
 
         for (auto phys_dev : instance.enumeratePhysicalDevices()) {
-            graphics_queue_family_idx = findGraphicsQueueFamilyIndex(
-                phys_dev.getQueueFamilyProperties());
+            auto queues_info = QueueFamiliesInfo::from(phys_dev, surface);
+
+            if (!queues_info.has_value() || !checkDeviceExtensions(phys_dev)) {
+                continue;
+            }
 
             if (glfwGetPhysicalDevicePresentationSupport(
                     static_cast<VkInstance>(*instance),
                     static_cast<VkPhysicalDevice>(*phys_dev),
-                    graphics_queue_family_idx) == GLFW_TRUE) {
-                vk_physical_device = phys_dev;
-                break;
+                    queues_info->present_family_idx) != GLFW_TRUE) {
+                continue;
             }
+
+            vk_physical_device = phys_dev;
+            vk_q_families_info = queues_info;
+            break;
         }
 
         if (!vk_physical_device.has_value()) {
-            throw std::runtime_error("failed to find GPUs with Vulkan support");
+            throw std::runtime_error(
+                "failed to find GPU with graphics and presentation support");
         }
+    }
 
+    void initDevice() {
+        auto& instance = vk_instance.value();
         auto& physical_device = vk_physical_device.value();
+        auto& queues_info = vk_q_families_info.value();
 
         uint32_t queue_count = 1;
-        float queue_priority = 0.0f;
+        float queue_priority = 1.0f;
 
-        std::vector<const char*>& device_layers = instance_layers;
-        std::vector<const char*> device_extensions{};
+        std::vector<vk::DeviceQueueCreateInfo> qc_infos{};
+        for (auto idx : {queues_info.graphics_family_idx,
+                         queues_info.present_family_idx}) {
+            vk::DeviceQueueCreateInfo dqci{
+                {}, idx, queue_count, &queue_priority};
+            qc_infos.emplace_back(dqci);
+        }
 
-        vk::DeviceQueueCreateInfo device_queue_create_info(
-            vk::DeviceQueueCreateFlags(), graphics_queue_family_idx,
-            queue_count, &queue_priority);
-
-        vk::DeviceCreateInfo device_create_info(
-            vk::DeviceCreateFlags(), device_queue_create_info, instance_layers,
-            device_extensions);
+        vk::DeviceCreateInfo device_create_info({}, qc_infos, instance_layers,
+                                                REQUIRED_DEVICE_EXTENSIONS);
 
         vk_device = physical_device.createDevice(device_create_info);
+        vk_graphics_queue =
+            vk_device->getQueue(queues_info.graphics_family_idx, 0);
+        vk_present_queue =
+            vk_device->getQueue(queues_info.present_family_idx, 0);
+    }
+
+    void initSwapchain() {
+        auto& phys_device = vk_physical_device.value();
+        auto& device = vk_device.value();
+        auto& surface = vk_surface.value();
+        auto& queues_info = vk_q_families_info.value();
+
+        auto surface_info = SurfaceInfo::from(phys_device, surface);
+
+        uint32_t family_idxs[2] = {queues_info.graphics_family_idx,
+                                   queues_info.present_family_idx};
+
+        auto img_sharing_mode = vk::SharingMode::eExclusive;
+        if (family_idxs[0] != family_idxs[1]) {
+            img_sharing_mode = vk::SharingMode::eConcurrent;
+        }
+
+        auto img_cnt = surface_info.capabilities.minImageCount + 1;
+        if (surface_info.capabilities.maxImageCount != 0) {
+            img_cnt =
+                std::min(surface_info.capabilities.maxImageCount, img_cnt);
+        }
+
+        vk::SwapchainCreateInfoKHR swapchain_info{
+            {},
+            surface,
+            img_cnt,
+            surface_info.color_format,
+            surface_info.color_space,
+            surface_info.capabilities.currentExtent,
+            1,
+            vk::ImageUsageFlagBits::eColorAttachment,
+            img_sharing_mode,
+            family_idxs};
+
+        swapchain_info.setPresentMode(surface_info.present_mode);
+
+        if (vk_swapchain.has_value()) {
+            swapchain_info.setOldSwapchain(vk_swapchain.value());
+        }
+
+        vk_swapchain = device.createSwapchainKHR(swapchain_info);
     }
 };
 
