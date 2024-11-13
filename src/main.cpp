@@ -32,8 +32,8 @@ class App {
         initSurface();
         initPhysicalDevice();
         initDevice();
-        initSwapchain();
-        createImageViews();
+
+        reloadGraphics();
     }
 
     /// @brief Runs window's event loop
@@ -61,6 +61,7 @@ class App {
     std::optional<vk::raii::Queue> vk_graphics_queue;
     std::optional<vk::raii::Queue> vk_present_queue;
     std::optional<SurfaceInfo> vk_surface_info;
+    std::optional<vk::raii::RenderPass> vk_render_pass;
 
     std::vector<vk::Image> vk_sc_images;
     std::vector<vk::raii::ImageView> vk_sc_imageviews;
@@ -182,7 +183,7 @@ class App {
 
     /// @brief Creates a Vulkan instance with recorded layers and extensions
     void initInstance() {
-        vk::ApplicationInfo app_info{"App", 1, "Engine", 1, VK_API_VERSION_1_3};
+        vk::ApplicationInfo app_info{"App", 1, "Engine", 1, vk::ApiVersion13};
         vk::InstanceCreateInfo inst_info(vk::InstanceCreateFlags{}, &app_info);
 
         inst_info.enabledExtensionCount = instance_extensions.size();
@@ -289,7 +290,14 @@ class App {
             vk_device->getQueue(queues_info.present_family_idx, 0);
     }
 
-    void initSwapchain() {
+    void reloadGraphics() {
+        createSwapchain();
+        createImageViews();
+        createRenderPass();
+        createPipeline();
+    }
+
+    void createSwapchain() {
         auto& phys_device = vk_physical_device.value();
         auto& device = vk_device.value();
         auto& surface = vk_surface.value();
@@ -335,8 +343,10 @@ class App {
     }
 
     void createImageViews() {
-        auto &srfc_info = vk_surface_info.value();
-        auto &device = vk_device.value();
+        auto& srfc_info = vk_surface_info.value();
+        auto& device = vk_device.value();
+
+        vk_sc_imageviews.clear();
 
         for (size_t i = 0; i < vk_sc_images.size(); i++) {
             vk::ImageSubresourceRange is_range{};
@@ -344,12 +354,50 @@ class App {
             is_range.setLayerCount(1);
             is_range.setLevelCount(1);
 
-            vk::ImageViewCreateInfo imv_info({}, vk_sc_images[i], vk::ImageViewType::e2D, srfc_info.color_format);
+            vk::ImageViewCreateInfo imv_info({}, vk_sc_images[i],
+                                             vk::ImageViewType::e2D,
+                                             srfc_info.color_format);
             imv_info.setSubresourceRange(is_range);
 
             vk_sc_imageviews.emplace_back(device.createImageView(imv_info));
         }
-        
+    }
+
+    void createRenderPass() {
+        auto& device = vk_device.value();
+        auto& surface_info = vk_surface_info.value();
+
+        vk::AttachmentDescription attach_desc{};
+        attach_desc.setFormat(surface_info.color_format);
+        attach_desc.setLoadOp(vk::AttachmentLoadOp::eClear);
+        attach_desc.setStencilLoadOp(vk::AttachmentLoadOp::eDontCare);
+        attach_desc.setStencilStoreOp(vk::AttachmentStoreOp::eDontCare);
+        attach_desc.setFinalLayout(vk::ImageLayout::ePresentSrcKHR);
+
+        vk::AttachmentReference attach_ref(0, vk::ImageLayout::eColorAttachmentOptimal);
+
+        vk::SubpassDescription sp_desc{};
+        sp_desc.setColorAttachments(attach_ref);
+
+        vk::RenderPassCreateInfo rp_info{};
+        rp_info.setAttachments(attach_desc);
+        rp_info.setSubpasses(sp_desc);
+
+        vk_render_pass = device.createRenderPass(rp_info);
+    }
+
+    void createPipeline() {
+        auto& device = vk_device.value();
+
+        auto shader_data = loadShader("shaders/lab.spv");
+
+        vk::PipelineShaderStageCreateInfo vert_shader_stage(
+            {}, vk::ShaderStageFlagBits::eVertex,
+            device.createShaderModule(shader_data), "vertex_main");
+
+        vk::PipelineShaderStageCreateInfo frag_shader_stage(
+            {}, vk::ShaderStageFlagBits::eFragment,
+            device.createShaderModule(shader_data), "fragment_main");
     }
 };
 
