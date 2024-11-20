@@ -20,7 +20,6 @@ fn vertex_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var result: VertexOutput;
     result.position = vec4f(positions[vertex_index], 0.0, 1.0);
     result.color = colors[vertex_index];
-
     return result;
 }
 

@@ -374,7 +374,8 @@ class App {
         attach_desc.setStencilStoreOp(vk::AttachmentStoreOp::eDontCare);
         attach_desc.setFinalLayout(vk::ImageLayout::ePresentSrcKHR);
 
-        vk::AttachmentReference attach_ref(0, vk::ImageLayout::eColorAttachmentOptimal);
+        vk::AttachmentReference attach_ref(
+            0, vk::ImageLayout::eColorAttachmentOptimal);
 
         vk::SubpassDescription sp_desc{};
         sp_desc.setColorAttachments(attach_ref);
@@ -389,15 +390,19 @@ class App {
     void createPipeline() {
         auto& device = vk_device.value();
 
-        auto shader_data = loadShader("shaders/lab.spv");
+        auto shader_data = loadShaderBytes("shaders/lab.spv");
+
+        vk::ShaderModuleCreateInfo shader(
+            {}, shader_data.size(),
+            reinterpret_cast<std::uint32_t const*>(shader_data.data()));
 
         vk::PipelineShaderStageCreateInfo vert_shader_stage(
             {}, vk::ShaderStageFlagBits::eVertex,
-            device.createShaderModule(shader_data), "vertex_main");
+            device.createShaderModule(shader), "vertex_main");
 
         vk::PipelineShaderStageCreateInfo frag_shader_stage(
             {}, vk::ShaderStageFlagBits::eFragment,
-            device.createShaderModule(shader_data), "fragment_main");
+            device.createShaderModule(shader), "fragment_main");
     }
 };
 

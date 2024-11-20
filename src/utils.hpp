@@ -120,7 +120,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugUtilsMessengerCallback(
     return vk::False;
 }
 
-vk::ShaderModuleCreateInfo loadShader(const std::string &path) {
+std::vector<char> loadShaderBytes(const std::string &path) {
     std::ifstream shader_file(path, std::ios::binary);
 
     shader_file.seekg(0, std::ios_base::end);
@@ -131,11 +131,5 @@ vk::ShaderModuleCreateInfo loadShader(const std::string &path) {
     shader_file.seekg(0, std::ios_base::beg);
     shader_file.read(binary.data(), shader_file_size);
 
-    vk::ShaderModuleCreateInfo shader({}, shader_file_size, reinterpret_cast<std::uint32_t const*>(binary.data()));
-
-#ifndef NDEBUG
-    std::cout << "Shader Magic Number: " << std::hex << *shader.pCode << std::endl;
-#endif
-
-    return shader;
+    return binary;
 }
