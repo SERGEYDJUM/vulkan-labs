@@ -33,7 +33,7 @@ class App {
         initPhysicalDevice();
         initDevice();
 
-        reloadGraphics();
+        rebuildGraphics();
     }
 
     /// @brief Runs window's event loop
@@ -60,11 +60,17 @@ class App {
     std::optional<QueueFamiliesInfo> vk_q_families_info;
     std::optional<vk::raii::Queue> vk_graphics_queue;
     std::optional<vk::raii::Queue> vk_present_queue;
+    std::optional<vk::raii::CommandPool> vk_cmd_pool;
+    std::optional<vk::raii::CommandBuffer> vk_cmd_buffer;
     std::optional<SurfaceInfo> vk_surface_info;
     std::optional<vk::raii::RenderPass> vk_render_pass;
+    std::optional<vk::raii::Pipeline> vk_pipeline;
+
+    vk::Optional<const vk::raii::PipelineCache> vk_pipeline_cache{nullptr};
 
     std::vector<vk::Image> vk_sc_images;
     std::vector<vk::raii::ImageView> vk_sc_imageviews;
+    std::vector<vk::raii::Framebuffer> vk_sc_framebuffers;
 
     std::vector<const char*> instance_extensions;
     std::vector<const char*> instance_layers;
@@ -283,18 +289,26 @@ class App {
 
         vk_device = physical_device.createDevice(device_create_info);
 
-        vk_graphics_queue =
-            vk_device->getQueue(queues_info.graphics_family_idx, 0);
+        auto& device = vk_device.value();
 
-        vk_present_queue =
-            vk_device->getQueue(queues_info.present_family_idx, 0);
+        vk_graphics_queue = device.getQueue(queues_info.graphics_family_idx, 0);
+        vk_present_queue = device.getQueue(queues_info.present_family_idx, 0);
+
+        vk::CommandPoolCreateInfo cmd_pool_info(vk::CommandPoolCreateFlagBits::eResetCommandBuffer, queues_info.graphics_family_idx);
+        vk_cmd_pool = device.createCommandPool(cmd_pool_info);
+
+        vk::CommandBufferAllocateInfo cmd_buffer_info{};
+        cmd_buffer_info.setCommandPool(vk_cmd_pool.value());
+        cmd_buffer_info.setCommandBufferCount(1);
+        vk_cmd_buffer = std::move(device.allocateCommandBuffers(cmd_buffer_info)[0]);
     }
 
-    void reloadGraphics() {
+    void rebuildGraphics() {
         createSwapchain();
         createImageViews();
         createRenderPass();
         createPipeline();
+        createFrameBuffers();
     }
 
     void createSwapchain() {
@@ -346,21 +360,21 @@ class App {
         auto& srfc_info = vk_surface_info.value();
         auto& device = vk_device.value();
 
+        vk::ImageSubresourceRange is_range{};
+        is_range.setAspectMask(vk::ImageAspectFlagBits::eColor);
+        is_range.setLayerCount(1);
+        is_range.setLevelCount(1);
+
         vk_sc_imageviews.clear();
 
-        for (size_t i = 0; i < vk_sc_images.size(); i++) {
-            vk::ImageSubresourceRange is_range{};
-            is_range.setAspectMask(vk::ImageAspectFlagBits::eColor);
-            is_range.setLayerCount(1);
-            is_range.setLevelCount(1);
-
-            vk::ImageViewCreateInfo imv_info({}, vk_sc_images[i],
-                                             vk::ImageViewType::e2D,
-                                             srfc_info.color_format);
-            imv_info.setSubresourceRange(is_range);
-
-            vk_sc_imageviews.emplace_back(device.createImageView(imv_info));
-        }
+        std::transform(
+            vk_sc_images.begin(), vk_sc_images.end(),
+            std::back_inserter(vk_sc_imageviews), [&](vk::Image& img) {
+                vk::ImageViewCreateInfo imv_info(
+                    {}, img, vk::ImageViewType::e2D, srfc_info.color_format);
+                imv_info.setSubresourceRange(is_range);
+                return device.createImageView(imv_info);
+            });
     }
 
     void createRenderPass() {
@@ -389,6 +403,7 @@ class App {
 
     void createPipeline() {
         auto& device = vk_device.value();
+        auto& render_pass = vk_render_pass.value();
 
         auto shader_data = loadShaderBytes("shaders/lab.spv");
 
@@ -396,13 +411,88 @@ class App {
             {}, shader_data.size(),
             reinterpret_cast<std::uint32_t const*>(shader_data.data()));
 
+        vk::raii::ShaderModule shader_module =
+            device.createShaderModule(shader);
+
         vk::PipelineShaderStageCreateInfo vert_shader_stage(
-            {}, vk::ShaderStageFlagBits::eVertex,
-            device.createShaderModule(shader), "vertex_main");
+            {}, vk::ShaderStageFlagBits::eVertex, shader_module, "vertex_main");
 
         vk::PipelineShaderStageCreateInfo frag_shader_stage(
-            {}, vk::ShaderStageFlagBits::eFragment,
-            device.createShaderModule(shader), "fragment_main");
+            {}, vk::ShaderStageFlagBits::eFragment, shader_module,
+            "fragment_main");
+
+        std::vector<vk::PipelineShaderStageCreateInfo> shader_stages = {
+            vert_shader_stage, frag_shader_stage};
+
+        vk::PipelineVertexInputStateCreateInfo vis_info{};
+        vk::PipelineInputAssemblyStateCreateInfo iss_info(
+            {}, vk::PrimitiveTopology::eTriangleList, false);
+        vk::PipelineViewportStateCreateInfo vps_info{};
+        vps_info.setViewportCount(1);
+        vps_info.setScissorCount(1);
+
+        vk::PipelineRasterizationStateCreateInfo raster_info{};
+        raster_info.setLineWidth(1.0f);
+        raster_info.setCullMode(vk::CullModeFlagBits::eBack);
+        raster_info.setFrontFace(vk::FrontFace::eClockwise);
+
+        vk::PipelineMultisampleStateCreateInfo ms_info{};
+        ms_info.setSampleShadingEnable(false);
+        ms_info.setRasterizationSamples(vk::SampleCountFlagBits::e1);
+
+        vk::PipelineColorBlendAttachmentState cbas{};
+        cbas.setColorWriteMask(
+            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+            vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
+        cbas.setBlendEnable(false);
+
+        vk::PipelineColorBlendStateCreateInfo cbs_info{};
+        cbs_info.setLogicOpEnable(false);
+        cbs_info.setAttachments(cbas);
+        cbs_info.setBlendConstants({0.0f, 0.0f, 0.0f, 0.0f});
+
+        std::vector<vk::DynamicState> dyn_states = {vk::DynamicState::eViewport,
+                                                    vk::DynamicState::eScissor};
+        vk::PipelineDynamicStateCreateInfo dyns_info({}, dyn_states);
+
+        auto layout =
+            device.createPipelineLayout(vk::PipelineLayoutCreateInfo());
+
+        vk::GraphicsPipelineCreateInfo gp_info{};
+        gp_info.setStages(shader_stages);
+        gp_info.setPVertexInputState(&vis_info);
+        gp_info.setPInputAssemblyState(&iss_info);
+        gp_info.setPViewportState(&vps_info);
+        gp_info.setPRasterizationState(&raster_info);
+        gp_info.setPMultisampleState(&ms_info);
+        gp_info.setPColorBlendState(&cbs_info);
+        gp_info.setPDynamicState(&dyns_info);
+        gp_info.setLayout(layout);
+        gp_info.setRenderPass(render_pass);
+        gp_info.setSubpass(0);
+
+        vk_pipeline = device.createGraphicsPipeline(vk_pipeline_cache, gp_info);
+    }
+
+    void createFrameBuffers() {
+        auto& device = vk_device.value();
+        auto& render_pass = vk_render_pass.value();
+        auto& extent = vk_surface_info.value().capabilities.currentExtent;
+
+        vk_sc_framebuffers.clear();
+
+        std::transform(vk_sc_imageviews.begin(), vk_sc_imageviews.end(),
+                       std::back_inserter(vk_sc_framebuffers),
+                       [&](vk::raii::ImageView& img) {
+                           vk::FramebufferCreateInfo fb_info{};
+                           fb_info.setRenderPass(render_pass);
+                           fb_info.setAttachments(*img);
+                           fb_info.setHeight(extent.height);
+                           fb_info.setWidth(extent.width);
+                           fb_info.setLayers(1);
+
+                           return device.createFramebuffer(fb_info);
+                       });
     }
 };
 
