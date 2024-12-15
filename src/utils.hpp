@@ -2,10 +2,13 @@
 #include <fstream>
 
 struct SurfaceInfo {
-    vk::SurfaceCapabilitiesKHR capabilities;
+    // vk::SurfaceCapabilitiesKHR capabilities;
     vk::Format color_format;
     vk::ColorSpaceKHR color_space;
     vk::PresentModeKHR present_mode;
+    vk::Extent2D extent;
+    uint32_t min_image_cnt;
+    uint32_t max_image_cnt;
 
     static SurfaceInfo from(vk::raii::PhysicalDevice &device,
                             vk::raii::SurfaceKHR &surface) {
@@ -29,8 +32,12 @@ struct SurfaceInfo {
             }
         }
 
-        return {capabilities, selected_format.format,
-                selected_format.colorSpace, selected_mode};
+        return {selected_format.format,
+                selected_format.colorSpace,
+                selected_mode,
+                capabilities.currentExtent,
+                capabilities.minImageCount,
+                capabilities.maxImageCount};
     }
 };
 
