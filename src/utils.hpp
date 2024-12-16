@@ -1,6 +1,29 @@
 #pragma once
 #include <fstream>
 
+struct Vertex {
+    glm::vec2 pos;
+    glm::vec3 color;
+
+    static vk::VertexInputBindingDescription getBindingDescription() {
+        return {0, sizeof(Vertex)};
+    }
+
+    static std::array<vk::VertexInputAttributeDescription, 2>
+    getAttributeDescriptions() {
+        std::array<vk::VertexInputAttributeDescription, 2>
+            attributeDescriptions{};
+
+        attributeDescriptions[0] = vk::VertexInputAttributeDescription(
+            0, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, pos));
+
+        attributeDescriptions[1] = vk::VertexInputAttributeDescription(
+            1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color));
+
+        return attributeDescriptions;
+    }
+};
+
 struct SurfaceInfo {
     // vk::SurfaceCapabilitiesKHR capabilities;
     vk::Format color_format;
@@ -139,4 +162,17 @@ std::vector<char> loadShaderBytes(const std::string &path) {
     shader_file.read(binary.data(), shader_file_size);
 
     return binary;
+}
+
+uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties,
+                        vk::PhysicalDeviceMemoryProperties memProperties) {
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        if ((typeFilter & (1 << i)) &&
+            (memProperties.memoryTypes[i].propertyFlags & properties) ==
+                properties) {
+            return i;
+        }
+    }
+
+    throw std::runtime_error("failed to find suitable memory type!");
 }

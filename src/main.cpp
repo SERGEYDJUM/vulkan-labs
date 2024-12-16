@@ -18,6 +18,24 @@ const std::vector<const char*> REQUIRED_DEVICE_EXTENSIONS = {
 
 const uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
+const std::vector<Vertex> VERTICES = {
+    {{0.25, 0.25}, {1, 0, 0}},
+    {{0, 0}, {0, 0, 1}},
+    {{0.25, -0.25}, {0, 1, 0}},
+
+    {{0, 0}, {0, 0, 1}},
+    {{-0.25, 0.25}, {0, 1, 0}},
+    {{-0.25, -0.25}, {1, 0, 0}},
+
+    {{-0.04, 0}, {0, 0, 0}},
+    {{-0.22, 0.17}, {0, 0, 0}},
+    {{-0.22, -0.17}, {0, 0, 0}},
+
+    {{0.04, 0}, {0, 0, 0}},
+    {{0.22, 0.17}, {0, 0, 0}},
+    {{0.22, -0.17}, {0, 0, 0}},
+};
+
 class App {
    public:
     /// @brief Initializes GLFW and Vulkan components in the correct order
@@ -33,6 +51,7 @@ class App {
         initSurface();
         initPhysicalDevice();
         initDevice();
+        initVertexBuffer();
         createSyncObjects();
         createRenderPass();
         createPipeline();
@@ -83,6 +102,8 @@ class App {
     std::vector<vk::Image> vk_sc_images;
     std::vector<vk::raii::ImageView> vk_sc_imageviews;
     std::vector<vk::raii::Framebuffer> vk_sc_framebuffers;
+    std::optional<vk::raii::Buffer> vk_vertex_buffer;
+    std::optional<vk::raii::DeviceMemory> vk_vb_memory;
 
     std::vector<vk::raii::Semaphore> vk_image_available_sema;
     std::vector<vk::raii::Semaphore> vk_render_finished_sema;
@@ -334,6 +355,32 @@ class App {
         vk_cmd_buffers = vk::raii::CommandBuffers(device, cmd_buffer_info);
     }
 
+    void initVertexBuffer() {
+        auto& phys_dev = vk_physical_device.value();
+        auto& device = vk_device.value();
+
+        vk::BufferCreateInfo vb_info({}, sizeof(VERTICES[0]) * VERTICES.size(),
+                                     vk::BufferUsageFlagBits::eVertexBuffer,
+                                     vk::SharingMode::eExclusive);
+        vk_vertex_buffer = device.createBuffer(vb_info);
+
+        auto mem_req = vk_vertex_buffer->getMemoryRequirements();
+        auto phys_mem_props = phys_dev.getMemoryProperties();
+
+        vk::MemoryAllocateInfo alloc_info(
+            mem_req.size,
+            findMemoryType(mem_req.memoryTypeBits,
+                           vk::MemoryPropertyFlagBits::eHostVisible |
+                               vk::MemoryPropertyFlagBits::eHostCoherent,
+                           phys_mem_props));
+
+        vk_vb_memory = device.allocateMemory(alloc_info);
+        vk_vertex_buffer->bindMemory(*vk_vb_memory, 0);
+        std::memcpy(vk_vb_memory->mapMemory(0, vb_info.size), VERTICES.data(),
+                    (size_t)vb_info.size);
+        vk_vb_memory->unmapMemory();
+    }
+
     void rebuildSwapchain() {
         auto& device = vk_device.value();
 
@@ -463,7 +510,7 @@ class App {
         auto& render_pass = vk_render_pass.value();
 
         auto vertex_shader_data = loadShaderBytes("shaders/vert.spv");
-        auto frag_shader_data = loadShaderBytes("shaders/frag.spv");
+        auto frag_shader_data = loadShaderBytes("shaders/lab.spv");
 
         vk::ShaderModuleCreateInfo vert_shader(
             {}, vertex_shader_data.size(),
@@ -483,12 +530,18 @@ class App {
             {}, vk::ShaderStageFlagBits::eVertex, vert_shader_module, "main");
 
         vk::PipelineShaderStageCreateInfo frag_shader_stage(
-            {}, vk::ShaderStageFlagBits::eFragment, frag_shader_module, "main");
+            {}, vk::ShaderStageFlagBits::eFragment, frag_shader_module,
+            "fragment_main");
 
         std::vector<vk::PipelineShaderStageCreateInfo> shader_stages = {
             vert_shader_stage, frag_shader_stage};
 
         vk::PipelineVertexInputStateCreateInfo vis_info{};
+        auto v_bind_desc = Vertex::getBindingDescription();
+        auto v_attr_descs = Vertex::getAttributeDescriptions();
+        vis_info.setVertexBindingDescriptions(v_bind_desc);
+        vis_info.setVertexAttributeDescriptions(v_attr_descs);
+
         vk::PipelineInputAssemblyStateCreateInfo iss_info(
             {}, vk::PrimitiveTopology::eTriangleList, false);
         vk::PipelineViewportStateCreateInfo vps_info{};
@@ -497,8 +550,8 @@ class App {
 
         vk::PipelineRasterizationStateCreateInfo raster_info{};
         raster_info.setLineWidth(1.0f);
-        raster_info.setCullMode(vk::CullModeFlagBits::eBack);
-        raster_info.setFrontFace(vk::FrontFace::eClockwise);
+        raster_info.setCullMode(vk::CullModeFlagBits::eNone);
+        raster_info.setFrontFace(vk::FrontFace::eCounterClockwise);
 
         vk::PipelineMultisampleStateCreateInfo ms_info{};
         ms_info.setSampleShadingEnable(false);
@@ -580,6 +633,7 @@ class App {
         auto& rpass = vk_render_pass.value();
         auto& fbuf = vk_sc_framebuffers[frame_idx];
         auto& pipeline = vk_pipeline.value();
+        auto& vertex_buffer = vk_vertex_buffer.value();
 
         vk::Rect2D rect({0, 0}, extent);
         vk::ClearColorValue clear_color({0.0f, 0.0f, 0.0f, 1.0f});
@@ -596,7 +650,8 @@ class App {
             cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
             cmd_buf.setViewport(0, viewport);
             cmd_buf.setScissor(0, rect);
-            cmd_buf.draw(3, 1, 0, 0);
+            cmd_buf.bindVertexBuffers(0, *vertex_buffer, {0});
+            cmd_buf.draw(static_cast<uint32_t>(VERTICES.size()), 1, 0, 0);
             cmd_buf.endRenderPass();
         }
 
