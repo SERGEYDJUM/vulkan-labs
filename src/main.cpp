@@ -19,21 +19,21 @@ const std::vector<const char*> REQUIRED_DEVICE_EXTENSIONS = {
 const uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
 const std::vector<Vertex> VERTICES = {
-    {{0.25, 0.25}, {1, 0, 0}},
+    {{0.5, 0.5}, {1, 0, 0}},
     {{0, 0}, {0, 0, 1}},
-    {{0.25, -0.25}, {0, 1, 0}},
+    {{0.5, -0.5}, {0, 1, 0}},
 
     {{0, 0}, {0, 0, 1}},
-    {{-0.25, 0.25}, {0, 1, 0}},
-    {{-0.25, -0.25}, {1, 0, 0}},
+    {{-0.5, 0.5}, {0, 1, 0}},
+    {{-0.5, -0.5}, {1, 0, 0}},
 
-    {{-0.04, 0}, {0, 0, 0}},
-    {{-0.22, 0.17}, {0, 0, 0}},
-    {{-0.22, -0.17}, {0, 0, 0}},
+    {{-0.08, 0}, {0, 0, 0}},
+    {{-0.44, 0.34}, {0, 0, 0}},
+    {{-0.44, -0.34}, {0, 0, 0}},
 
-    {{0.04, 0}, {0, 0, 0}},
-    {{0.22, 0.17}, {0, 0, 0}},
-    {{0.22, -0.17}, {0, 0, 0}},
+    // {{0.08, 0}, {0, 0, 0}},
+    // {{0.44, 0.34}, {0, 0, 0}},
+    // {{0.44, -0.34}, {0, 0, 0}},
 };
 
 class App {
@@ -550,8 +550,8 @@ class App {
 
         vk::PipelineRasterizationStateCreateInfo raster_info{};
         raster_info.setLineWidth(1.0f);
-        raster_info.setCullMode(vk::CullModeFlagBits::eNone);
-        raster_info.setFrontFace(vk::FrontFace::eCounterClockwise);
+        raster_info.setCullMode(vk::CullModeFlagBits::eBack);
+        raster_info.setFrontFace(vk::FrontFace::eClockwise);
 
         vk::PipelineMultisampleStateCreateInfo ms_info{};
         ms_info.setSampleShadingEnable(false);

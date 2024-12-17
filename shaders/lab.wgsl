@@ -25,21 +25,16 @@ struct VertexOutput {
 
 fn rng(p: vec2f) -> f32 {
     let K1 = vec2f(23.14069263277926, 2.665144142690225);
-    return fract(cos(dot(p, K1)) * 12345.6789);
-}
-
-fn normalize(x: f32) -> f32 {
+    let number = fract(cos(dot(p, K1)) * 12345.6789);
     return (x + 1) / 2;
 }
 
 @fragment
 fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
     var output = vec4f(input.color, 1.0);
-
     let lightness = dot(output.rgb, vec3f(1, 1, 1)) / 3;
-    let noise = normalize(rng(input.position.xy));
 
-    output = vec4f(output.rgb - 0.5 * noise * lightness, output.w);
+    output = vec4f(output.rgb - 0.5 * rng(input.position.xy) * lightness, output.w);
     output = pow(output, vec4f(0.8));
 
     if u32(input.position.x) % 5 == 0 {
